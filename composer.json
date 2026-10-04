@@ -1,7 +1,0 @@
-{
-  "name": "telegram-php-webhook",
-  "description": "PHP Webhook Receiver for Telegram Auto Poster",
-  "require": {
-    "php": ">=7.4"
-  }
-}
