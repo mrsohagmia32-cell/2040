@@ -62,28 +62,36 @@ app.post('/api/verify-otp', async (req, res) => {
     }
 });
 
-// 💬 ৩. আনলিমিটেড চ্যাট ও চ্যানেল লোড করা (সকল চ্যাট/চ্যানেল ফেচ হবে)
+// 💬 ৩. পেজিনেশনসহ চ্যাট লোড করা (১০টি করে চ্যাট আসবে)
 app.post('/api/get-dialogs', async (req, res) => {
-    const { session } = req.body;
+    const { session, offsetDate, limit = 10 } = req.body;
     try {
         const client = new TelegramClient(new StringSession(session), apiId, apiHash, { connectionRetries: 5 });
         await client.connect();
         
-        // limit: undefined দিলে অ্যাকাউন্টের ৫০০+ বা সব চ্যাট একসাথে লোড হবে
-        const dialogs = await client.getDialogs({ limit: undefined });
+        const options = { limit: Number(limit) };
+        if (offsetDate) {
+            options.offsetDate = Number(offsetDate);
+        }
+
+        const dialogs = await client.getDialogs(options);
         
+        let lastDate = null;
         const chatList = dialogs.map(d => {
             let chatType = 'user';
             let isReadOnly = false;
 
             if (d.isChannel) {
                 chatType = 'channel';
-                // চ্যানেল অ্যাডমিন না হলে মেসেজ দেওয়া যাবে না
                 if (!d.entity || !d.entity.adminRights) isReadOnly = true;
             } else if (d.isGroup) {
                 chatType = 'group';
             } else if (d.entity && d.entity.bot) {
                 chatType = 'bot';
+            }
+
+            if (d.message) {
+                lastDate = d.message.date;
             }
 
             return {
@@ -92,11 +100,17 @@ app.post('/api/get-dialogs', async (req, res) => {
                 type: chatType,
                 isReadOnly: isReadOnly,
                 lastMessage: d.message ? d.message.message : '',
-                date: d.message ? new Date(d.message.date * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
+                date: d.message ? new Date(d.message.date * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
+                rawDate: d.message ? d.message.date : null
             };
         });
 
-        res.json({ success: true, chats: chatList });
+        res.json({ 
+            success: true, 
+            chats: chatList,
+            nextOffsetDate: lastDate,
+            hasMore: dialogs.length === limit
+        });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
