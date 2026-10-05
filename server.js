@@ -62,20 +62,39 @@ app.post('/api/verify-otp', async (req, res) => {
     }
 });
 
-// 💬 ৩. চ্যাট লিস্ট এবং লাস্ট মেসেজ আনা
+// 💬 ৩. আনলিমিটেড চ্যাট ও চ্যানেল লোড করা (সকল চ্যাট/চ্যানেল ফেচ হবে)
 app.post('/api/get-dialogs', async (req, res) => {
     const { session } = req.body;
     try {
         const client = new TelegramClient(new StringSession(session), apiId, apiHash, { connectionRetries: 5 });
         await client.connect();
-        const dialogs = await client.getDialogs({ limit: 30 });
         
-        const chatList = dialogs.map(d => ({
-            id: d.id.toString(),
-            name: d.title || d.name || 'Unknown',
-            lastMessage: d.message ? d.message.message : '',
-            date: d.message ? new Date(d.message.date * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
-        }));
+        // limit: undefined দিলে অ্যাকাউন্টের ৫০০+ বা সব চ্যাট একসাথে লোড হবে
+        const dialogs = await client.getDialogs({ limit: undefined });
+        
+        const chatList = dialogs.map(d => {
+            let chatType = 'user';
+            let isReadOnly = false;
+
+            if (d.isChannel) {
+                chatType = 'channel';
+                // চ্যানেল অ্যাডমিন না হলে মেসেজ দেওয়া যাবে না
+                if (!d.entity || !d.entity.adminRights) isReadOnly = true;
+            } else if (d.isGroup) {
+                chatType = 'group';
+            } else if (d.entity && d.entity.bot) {
+                chatType = 'bot';
+            }
+
+            return {
+                id: d.id.toString(),
+                name: d.title || d.name || 'Unknown',
+                type: chatType,
+                isReadOnly: isReadOnly,
+                lastMessage: d.message ? d.message.message : '',
+                date: d.message ? new Date(d.message.date * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
+            };
+        });
 
         res.json({ success: true, chats: chatList });
     } catch (error) {
@@ -83,14 +102,33 @@ app.post('/api/get-dialogs', async (req, res) => {
     }
 });
 
-// 📜 ৪. নির্দিষ্ট চ্যাটের মেসেজ হিস্ট্রি লোড করা
+// 🖼 ৪. প্রোফাইল লোগো ফেচ করা
+app.post('/api/get-avatar', async (req, res) => {
+    const { session, chatId } = req.body;
+    try {
+        const client = new TelegramClient(new StringSession(session), apiId, apiHash, { connectionRetries: 5 });
+        await client.connect();
+
+        const buffer = await client.downloadProfilePhoto(chatId, { isBig: false });
+        if (buffer && buffer.length > 0) {
+            const base64 = buffer.toString('base64');
+            res.json({ success: true, avatar: `data:image/jpeg;base64,${base64}` });
+        } else {
+            res.json({ success: false });
+        }
+    } catch (error) {
+        res.json({ success: false });
+    }
+});
+
+// 📜 ৫. মেসেজ হিস্ট্রি লোড
 app.post('/api/get-messages', async (req, res) => {
     const { session, chatId } = req.body;
     try {
         const client = new TelegramClient(new StringSession(session), apiId, apiHash, { connectionRetries: 5 });
         await client.connect();
         
-        const messages = await client.getMessages(chatId, { limit: 20 });
+        const messages = await client.getMessages(chatId, { limit: 25 });
         const history = messages.map(m => ({
             id: m.id,
             text: m.message,
@@ -104,7 +142,7 @@ app.post('/api/get-messages', async (req, res) => {
     }
 });
 
-// 📤 ৫. মেসেজ পাঠানো
+// 📤 ৬. মেসেজ পাঠানো
 app.post('/api/send-message', async (req, res) => {
     const { session, to, message } = req.body;
     try {
