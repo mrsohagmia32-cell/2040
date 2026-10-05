@@ -62,19 +62,19 @@ app.post('/api/verify-otp', async (req, res) => {
     }
 });
 
-// 💬 ৩. চ্যাট লিস্ট আনা
+// 💬 ৩. চ্যাট লিস্ট এবং লাস্ট মেসেজ আনা
 app.post('/api/get-dialogs', async (req, res) => {
     const { session } = req.body;
     try {
         const client = new TelegramClient(new StringSession(session), apiId, apiHash, { connectionRetries: 5 });
         await client.connect();
-        const dialogs = await client.getDialogs({ limit: 15 });
+        const dialogs = await client.getDialogs({ limit: 30 });
         
         const chatList = dialogs.map(d => ({
             id: d.id.toString(),
             name: d.title || d.name || 'Unknown',
-            isGroup: d.isGroup,
-            isChannel: d.isChannel
+            lastMessage: d.message ? d.message.message : '',
+            date: d.message ? new Date(d.message.date * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
         }));
 
         res.json({ success: true, chats: chatList });
@@ -83,14 +83,35 @@ app.post('/api/get-dialogs', async (req, res) => {
     }
 });
 
-// 📤 ৪. মেসেজ পাঠানো
+// 📜 ৪. নির্দিষ্ট চ্যাটের মেসেজ হিস্ট্রি লোড করা
+app.post('/api/get-messages', async (req, res) => {
+    const { session, chatId } = req.body;
+    try {
+        const client = new TelegramClient(new StringSession(session), apiId, apiHash, { connectionRetries: 5 });
+        await client.connect();
+        
+        const messages = await client.getMessages(chatId, { limit: 20 });
+        const history = messages.map(m => ({
+            id: m.id,
+            text: m.message,
+            out: m.out,
+            date: new Date(m.date * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        })).reverse();
+
+        res.json({ success: true, messages: history });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// 📤 ৫. মেসেজ পাঠানো
 app.post('/api/send-message', async (req, res) => {
     const { session, to, message } = req.body;
     try {
         const client = new TelegramClient(new StringSession(session), apiId, apiHash, { connectionRetries: 5 });
         await client.connect();
         await client.sendMessage(to, { message: message });
-        res.json({ success: true, message: 'মেসেজ পাঠানো হয়েছে!' });
+        res.json({ success: true });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
