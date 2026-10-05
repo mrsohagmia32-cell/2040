@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const { TelegramClient } = require('telegram');
+const { TelegramClient, Api } = require('telegram');
 const { StringSession } = require('telegram/sessions');
 
 const app = express();
@@ -12,7 +12,7 @@ app.use(express.json());
 const apiId = Number(process.env.API_ID || 30069169);
 const apiHash = process.env.API_HASH || '9817a1c87970dd9f80c8f91c1ad704bb';
 
-// স্টোর এবং সেশন ট্র্যাকিং
+// মেমোরি স্টোর
 const sessions = {};
 const phoneCodeHashStore = {};
 
@@ -46,9 +46,9 @@ app.post('/api/send-otp', async (req, res) => {
     }
 });
 
-// 🔑 ২. OTP ভেরিফাই ও লগইন এন্ডপয়েন্ট
+// 🔑 ২. OTP ভেরিফাই ও লগইন এন্ডপয়েন্ট (FIXED)
 app.post('/api/verify-otp', async (req, res) => {
-    const { phone, code } = req.body;
+    const { phone, code, password } = req.body;
 
     if (!phone || !code) {
         return res.status(400).json({ success: false, error: 'ফোন নম্বর এবং OTP কোড প্রদান করুন।' });
@@ -62,11 +62,14 @@ app.post('/api/verify-otp', async (req, res) => {
     }
 
     try {
-        await client.signIn({
-            phoneNumber: phone,
-            phoneCodeHash: phoneCodeHash,
-            phoneCode: code,
-        });
+        // GramJS-এর সঠিক সাইন-ইন API কল
+        await client.invoke(
+            new Api.auth.SignIn({
+                phoneNumber: phone,
+                phoneCodeHash: phoneCodeHash,
+                phoneCode: code,
+            })
+        );
 
         const sessionString = client.session.save();
 
@@ -74,14 +77,44 @@ app.post('/api/verify-otp', async (req, res) => {
         delete sessions[phone];
         delete phoneCodeHashStore[phone];
 
-        res.json({ 
+        return res.json({ 
             success: true, 
             message: 'লগইন সফল হয়েছে!', 
             session: sessionString 
         });
+
     } catch (error) {
         console.error('Verify Error:', error);
-        res.status(500).json({ success: false, error: error.message || 'OTP ভেরিফিকেশন ব্যর্থ হয়েছে।' });
+
+        // টু-স্টেপ ভেরিফিকেশন পাসওয়ার্ড প্রয়োজন হলে
+        if (error.errorMessage === 'SESSION_PASSWORD_NEEDED' || (error.message && error.message.includes('SESSION_PASSWORD_NEEDED'))) {
+            if (!password) {
+                return res.json({ 
+                    success: false, 
+                    needPassword: true, 
+                    error: 'আপনার অ্যাকাউন্টে 2-Step Verification অন করা আছে। পাসওয়ার্ড দিন।' 
+                });
+            }
+
+            try {
+                // ২-স্টেপ পাসওয়ার্ড দিয়ে চেষ্টা
+                await client.checkPassword(password);
+                const sessionString = client.session.save();
+
+                delete sessions[phone];
+                delete phoneCodeHashStore[phone];
+
+                return res.json({ 
+                    success: true, 
+                    message: 'পাসওয়ার্ডসহ লগইন সফল হয়েছে!', 
+                    session: sessionString 
+                });
+            } catch (pwdErr) {
+                return res.status(400).json({ success: false, error: 'ভুল ২-স্টেপ পাসওয়ার্ড দেওয়া হয়েছে!' });
+            }
+        }
+
+        return res.status(500).json({ success: false, error: error.errorMessage || error.message || 'OTP ভেরিফিকেশন ব্যর্থ হয়েছে।' });
     }
 });
 
